@@ -25,25 +25,46 @@ class EverythingItNeedsAction : AnAction(), DumbAware {
 
         val filePath = virtualFile.path
 
-        val lineNumber = editor?.let { it.caretModel.currentCaret.logicalPosition.line + 1 }
+        if (editor != null && editor.selectionModel.hasSelection()) {
+            // Area selection: use selection start/end lines and show the selection context
+            val selectionModel = editor.selectionModel
+            val doc = editor.document
+            val startLine = doc.getLineNumber(selectionModel.selectionStart)
+            val endLine = doc.getLineNumber(selectionModel.selectionEnd)
 
-        val refId = if (editor != null) {
-            resolveReferenceId(editor, virtualFile, project)
+            val refElement = resolveReferenceElement(editor, project)
+            val refId = refElement?.let { buildQualifiedName(it) }
+            val refKind = refElement?.let { getElementKind(it) }
+            val codeContext = getSurroundingLinesForSelection(editor, startLine, endLine)
+            val content =
+                buildCopyContentForSelection(filePath, startLine + 1, endLine + 1, refId, refKind, codeContext)
+
+            CopyPasteManager.getInstance().setContents(StringSelection(content))
         } else {
-            null
+            // Single caret: existing behavior
+            val lineNumber = editor?.let { it.caretModel.currentCaret.logicalPosition.line + 1 }
+
+            val refElement = if (editor != null) {
+                resolveReferenceElement(editor, project)
+            } else {
+                null
+            }
+            val refId = refElement?.let { buildQualifiedName(it) }
+            val refKind = refElement?.let { getElementKind(it) }
+
+            val codeContext = editor?.let { getSurroundingLines(it) }
+
+            val content = buildCopyContent(filePath, lineNumber, refId, refKind, codeContext)
+
+            CopyPasteManager.getInstance().setContents(StringSelection(content))
         }
-
-        val codeContext = editor?.let { getSurroundingLines(it) }
-
-        val content = buildCopyContent(filePath, lineNumber, refId, codeContext)
-
-        CopyPasteManager.getInstance().setContents(StringSelection(content))
     }
 
     private fun buildCopyContent(
         filePath: @NonNls String,
         lineNumber: Int?,
         refId: String?,
+        refKind: String?,
         codeContext: String?
     ): @NonNls String {
         return buildString {
@@ -52,7 +73,11 @@ class EverythingItNeedsAction : AnAction(), DumbAware {
                 append(":$lineNumber")
             }
             if (refId != null) {
-                append(" ($refId)")
+                append(" ($refId")
+                if (refKind != null) {
+                    append(", $refKind")
+                }
+                append(")")
             }
             if (codeContext != null) {
                 append("\n\n").append(codeContext)
@@ -60,19 +85,43 @@ class EverythingItNeedsAction : AnAction(), DumbAware {
         }
     }
 
-    private fun resolveReferenceId(
+    private fun buildCopyContentForSelection(
+        filePath: @NonNls String,
+        startLineNumber: Int,
+        endLineNumber: Int,
+        refId: String?,
+        refKind: String?,
+        codeContext: String?
+    ): @NonNls String {
+        return buildString {
+            append(filePath)
+            append(":$startLineNumber-$endLineNumber")
+            if (refId != null) {
+                append(" ($refId")
+                if (refKind != null) {
+                    append(", $refKind")
+                }
+                append(")")
+            }
+            if (codeContext != null) {
+                append("\n\n").append(codeContext)
+            }
+        }
+    }
+
+    /**
+     * Resolves the best [PsiNamedElement] at the editor's caret position.
+     */
+    private fun resolveReferenceElement(
         editor: Editor,
-        virtualFile: VirtualFile,
         project: com.intellij.openapi.project.Project
-    ): String? {
+    ): PsiNamedElement? {
         val psiFile: PsiFile = PsiUtilBase.getPsiFileInEditor(editor, project) ?: return null
         val offset = editor.caretModel.offset
 
         // Try the most specific element at offset first
         val elementAtOffset = psiFile.findElementAt(offset)
-        val namedElement = findBestNamedElement(elementAtOffset) ?: return null
-
-        return buildQualifiedName(namedElement)
+        return findBestNamedElement(elementAtOffset)
     }
 
     /**
@@ -94,6 +143,43 @@ class EverythingItNeedsAction : AnAction(), DumbAware {
             current = current.parent
         }
         return null
+    }
+
+    /**
+     * Returns a human-readable element kind (e.g. "method", "class", "field") for a [PsiNamedElement].
+     *
+     * Uses the PSI node's element type string and maps common platform/language types to
+     * concise names. Returns the raw type string in lowercase if no mapping is found.
+     */
+    private fun getElementKind(element: PsiNamedElement): String? {
+        val psiElement = element as? PsiElement ?: return null
+        val typeName = psiElement.node?.elementType?.toString() ?: return null
+        return when {
+            typeName.endsWith("METHOD", ignoreCase = true) ||
+                    typeName.endsWith("FUNCTION", ignoreCase = true) ||
+                    typeName == "KtNamedFunction" -> "method"
+
+            typeName.endsWith("CLASS", ignoreCase = true) ||
+                    typeName == "KtClassOrObject" -> "class"
+
+            typeName.endsWith("FIELD", ignoreCase = true) ||
+                    typeName.endsWith("PROPERTY", ignoreCase = true) ||
+                    typeName == "KtProperty" -> "field"
+
+            typeName.endsWith("VARIABLE", ignoreCase = true) -> "variable"
+            typeName.endsWith("PARAMETER", ignoreCase = true) ||
+                    typeName == "KtParameter" -> "parameter"
+
+            typeName.endsWith("ENUM", ignoreCase = true) ||
+                    typeName == "KtEnumEntry" -> "enum"
+
+            typeName.endsWith("INTERFACE", ignoreCase = true) -> "interface"
+            typeName.endsWith("ANNOTATION", ignoreCase = true) ||
+                    typeName == "KtAnnotationEntry" -> "annotation"
+
+            typeName.endsWith("CONSTRUCTOR", ignoreCase = true) -> "constructor"
+            else -> typeName.lowercase()
+        }
     }
 
     private fun buildQualifiedName(element: PsiNamedElement): String? {
@@ -126,6 +212,7 @@ class EverythingItNeedsAction : AnAction(), DumbAware {
 
         if (startLine > endLine) return ""
 
+        val width = (endLine + 1).toString().length
 
         return buildString {
             for (line in startLine..endLine) {
@@ -134,9 +221,45 @@ class EverythingItNeedsAction : AnAction(), DumbAware {
                 val lineText = document.getText(TextRange(lineStart, lineEnd))
 
                 val prefix = if (line == caretLine) ">" else " "
-                val formattedLineNumber = (line + 1).toString().padStart(4)
+                val formattedLineNumber = (line + 1).toString().padStart(width)
 
-                append("$prefix$formattedLineNumber $lineText \n")
+                append("$prefix$formattedLineNumber $lineText")
+                if (line < endLine) {
+                    append("\n")
+                }
+            }
+        }
+    }
+
+    private fun getSurroundingLinesForSelection(editor: Editor, selStartLine: Int, selEndLine: Int): String {
+        val document = editor.document
+        val lineCount = document.lineCount
+
+        val startLine = selStartLine.coerceAtLeast(0)
+        val endLine = selEndLine.coerceAtMost(lineCount - 1)
+
+        if (startLine > endLine) return ""
+
+        val width = (endLine + 1).toString().length
+
+        return buildString {
+            for (line in startLine..endLine) {
+                val lineStart = document.getLineStartOffset(line)
+                val lineEnd = document.getLineEndOffset(line)
+                val lineText = document.getText(TextRange(lineStart, lineEnd))
+
+                val prefix = when (line) {
+                    selStartLine -> ">"
+                    selEndLine -> ">"
+                    else -> " "
+                }
+
+                val formattedLineNumber = (line + 1).toString().padStart(width)
+
+                append("$prefix$formattedLineNumber $lineText")
+                if (line < endLine) {
+                    append("\n")
+                }
             }
         }
     }
