@@ -8,26 +8,29 @@
     <name>Everything-it-needs</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://www.yourcompany.com">YourCompany</vendor>
+    <vendor url="https://github.com/k88936">k88936</vendor>
 
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[
-        Enter short description for your plugin here.<br>
-        <em>most HTML tags may be used</em>
+        This plugin is an enhancement to copy path/reference. It contains: path, line number, psi ref, code context.
+        Especially for code agent usage.
         ]]></description>
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
 
-    <resource-bundle>messages.MyMessageBundle</resource-bundle>
-
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
-    <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="MyToolWindow" factoryClass="top.k88936.MyToolWindowFactory"
-                    icon="AllIcons.Toolwindows.ToolWindowPalette"/>
-    </extensions>
+    <actions>
+        <action id="EverythingItNeeds" class="top.k88936.EverythingItNeedsAction"
+                text="Everything It Needs"
+                description="copy everything it needs when you ref something to code agent">
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt shift R"/>
+            <add-to-group group-id="CopyReferencePopupGroup" anchor="after" relative-to-action="CopyReference"/>
+            <add-to-group group-id="Copy.Paste.Special" anchor="after" relative-to-action="CopyReference"/>
+        </action>
+    </actions>
 
 </idea-plugin>
